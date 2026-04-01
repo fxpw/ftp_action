@@ -9,7 +9,7 @@ steps:
   - uses: actions/checkout@v3
 
   - name: FTP Upload
-    uses: fxpw/ftp_action@v1
+    uses: fxpw/ftp_action@v1.0.0
     with:
       host: ${{ secrets.FTP_HOST }}
       username: ${{ secrets.FTP_USER }}
