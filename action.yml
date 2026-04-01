@@ -1,0 +1,28 @@
+name: "FTP Deploy Action"
+description: "Загрузка файлов на FTP/SFTP с логированием каждого файла (basic-ftp v5.2+)"
+runs:
+  using: "node16"
+  main: "index.js"
+
+inputs:
+  host:
+    description: "FTP/SFTP хост"
+    required: true
+  username:
+    description: "FTP пользователь"
+    required: true
+  password:
+    description: "FTP пароль"
+    required: true
+  local_dir:
+    description: "Локальная папка для загрузки"
+    required: true
+    default: "./"
+  remote_dir:
+    description: "Директория на сервере"
+    required: false
+    default: "/"
+  secure:
+    description: "FTPS (true/false)"
+    required: false
+    default: "false"
