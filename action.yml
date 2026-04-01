@@ -1,5 +1,6 @@
 name: "FTP Deploy Action"
 description: "Загрузка файлов на FTP/SFTP с логированием каждого файла (basic-ftp v5.2+)"
+author: 'Anton Koshel <fxpw@outlook.com>'
 runs:
   using: "node16"
   main: "index.js"
