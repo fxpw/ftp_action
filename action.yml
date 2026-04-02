@@ -32,3 +32,11 @@ inputs:
     description: "FTPS (true/false)"
     required: false
     default: "false"
+  retry_count:
+    description: "Количество повторных попыток загрузки при сетевых ошибках"
+    required: false
+    default: "3"
+  retry_delay_ms:
+    description: "Задержка между повторными попытками в миллисекундах"
+    required: false
+    default: "2000"
