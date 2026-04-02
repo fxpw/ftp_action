@@ -112,12 +112,41 @@ async function main() {
         return false;
     }
 
+    /** @param {number} bytes */
+    function formatBytes(bytes) {
+        if (bytes < 1024) {
+            return `${bytes} B`;
+        }
+        const units = ["KB", "MB", "GB", "TB"];
+        let value = bytes / 1024;
+        let unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.length - 1) {
+            value /= 1024;
+            unitIndex += 1;
+        }
+        return `${value.toFixed(2)} ${units[unitIndex]}`;
+    }
+
+    /** @param {number} seconds */
+    function formatDuration(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) {
+            return "0s";
+        }
+        const total = Math.round(seconds);
+        const mins = Math.floor(total / 60);
+        const secs = total % 60;
+        if (mins === 0) {
+            return `${secs}s`;
+        }
+        return `${mins}m ${secs}s`;
+    }
+
     /**
      * @param {string} rootPath
-     * @returns {Array<{local: string, remote: string}>}
+     * @returns {Array<{local: string, remote: string, size: number}>}
      */
     function collectFiles(rootPath) {
-        /** @type {Array<{local: string, remote: string}>} */
+        /** @type {Array<{local: string, remote: string, size: number}>} */
         const files = [];
 
         /** @param {string} currentPath */
@@ -134,7 +163,8 @@ async function main() {
                 if (entry.isFile()) {
                     const relativePath = path.relative(rootPath, localEntryPath).split(path.sep).join(path.posix.sep);
                     const remoteEntryPath = path.posix.join(remoteDir, relativePath);
-                    files.push({ local: localEntryPath, remote: remoteEntryPath });
+                    const size = fs.statSync(localEntryPath).size;
+                    files.push({ local: localEntryPath, remote: remoteEntryPath, size });
                 }
             }
         }
@@ -157,8 +187,31 @@ async function main() {
         /** @type {string[]} */
         const failedUploads = [];
         let uploadedCount = 0;
+        let uploadedBytes = 0;
+        const startedAt = Date.now();
 
         const filesToUpload = collectFiles(localDir);
+        const totalFiles = filesToUpload.length;
+        const totalBytes = filesToUpload.reduce((sum, file) => sum + file.size, 0);
+
+        function logProgress() {
+            const elapsedSec = Math.max((Date.now() - startedAt) / 1000, 0.001);
+            const bytesPerSec = uploadedBytes / elapsedSec;
+            const remainingBytes = Math.max(totalBytes - uploadedBytes, 0);
+            const etaSec = bytesPerSec > 0 ? remainingBytes / bytesPerSec : 0;
+            const progressPercent = totalFiles > 0
+                ? ((uploadedCount + failedUploads.length) / totalFiles) * 100
+                : 100;
+
+            console.log(
+                `📊 Прогресс: ${uploadedCount + failedUploads.length}/${totalFiles} (${progressPercent.toFixed(1)}%) | ` +
+                `Файлов загружено: ${uploadedCount} | ` +
+                `Объем: ${formatBytes(uploadedBytes)}/${formatBytes(totalBytes)} | ` +
+                `Скорость: ${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s | ` +
+                `ETA: ${formatDuration(etaSec)}`
+            );
+        }
+
         if (filesToUpload.length === 0) {
             console.log("ℹ️ Нет файлов для загрузки");
         }
@@ -182,9 +235,11 @@ async function main() {
                     const uploaded = await uploadWithRetry(workerClient, file.local, file.remote, workerId);
                     if (uploaded) {
                         uploadedCount += 1;
+                        uploadedBytes += file.size;
                     } else {
                         failedUploads.push(file.local);
                     }
+                    logProgress();
                 }
             } finally {
                 workerClient.close();
@@ -198,6 +253,8 @@ async function main() {
         }
 
         await Promise.all(workers);
+
+        logProgress();
 
         if (failedUploads.length > 0) {
             console.error(`❌ Загружено файлов: ${uploadedCount}`);
