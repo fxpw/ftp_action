@@ -36,6 +36,42 @@ async function main() {
     /** @param {number} ms */
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+    /**
+     * Сетевые обрывы (ECONNRESET, EPIPE и т.д.) оставляют клиент basic-ftp в несогласованном
+     * состоянии — без переподключения повторная попытка почти всегда бесполезна.
+     * @param {unknown} err
+     */
+    function isRecoverableConnectionError(err) {
+        if (err instanceof Error) {
+            const e = /** @type {NodeJS.ErrnoException} */ (err);
+            const code = e.code;
+            if (
+                code === "ECONNRESET" ||
+                code === "EPIPE" ||
+                code === "ETIMEDOUT" ||
+                code === "ECONNABORTED" ||
+                code === "ENOTCONN" ||
+                code === "EHOSTUNREACH" ||
+                code === "ENETUNREACH"
+            ) {
+                return true;
+            }
+            const msg = err.message;
+            if (
+                msg.includes("ECONNRESET") ||
+                msg.includes("EPIPE") ||
+                msg.includes("ETIMEDOUT") ||
+                msg.includes("Client is closed")
+            ) {
+                return true;
+            }
+        }
+        if (err && typeof err === "object" && "cause" in err) {
+            return isRecoverableConnectionError(/** @type {{ cause: unknown }} */ (err).cause);
+        }
+        return false;
+    }
+
     /** @returns {ftp.Client} */
     function createClient() {
         const client = new ftp.Client();
@@ -86,8 +122,7 @@ async function main() {
             } catch (err) {
                 lastError = err;
                 const message = err instanceof Error ? err.message : String(err);
-                const shouldReconnect =
-                    message.includes("ECONNRESET") || message.includes("Client is closed");
+                const shouldReconnect = isRecoverableConnectionError(err);
 
                 console.error(`❌ [W${workerId}] Ошибка загрузки ${path.basename(localFile)} (попытка ${attempt + 1}/${retryCount + 1}): ${message}`);
 
