@@ -32,6 +32,10 @@ inputs:
     description: "FTPS (true/false)"
     required: false
     default: "false"
+  secure_reject_unauthorized:
+    description: "Проверять TLS сертификат сервера (для self-signed установите false)"
+    required: false
+    default: "true"
   retry_count:
     description: "Количество повторных попыток загрузки при сетевых ошибках"
     required: false

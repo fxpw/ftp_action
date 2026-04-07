@@ -14,6 +14,7 @@ GitHub Action для загрузки файлов на FTP/SFTP с логиро
 | `local_dir` | Локальная папка для загрузки | ✅ | `./` |
 | `remote_dir` | Директория на сервере | ❌ | `/` |
 | `secure` | Использовать FTPS | ❌ | `false` |
+| `secure_reject_unauthorized` | Проверять TLS сертификат FTPS-сервера | ❌ | `true` |
 | `retry_count` | Количество повторных попыток при сетевой ошибке | ❌ | `3` |
 | `retry_delay_ms` | Пауза между попытками (мс) | ❌ | `2000` |
 | `parallel_uploads` | Количество параллельных загрузок | ❌ | `3` |
@@ -33,6 +34,7 @@ steps:
       local_dir: "./build"
       remote_dir: "/public_html"
       secure: "false"
+      secure_reject_unauthorized: "true"
       retry_count: "3"
       retry_delay_ms: "2000"
       parallel_uploads: "3"
@@ -40,8 +42,19 @@ steps:
 
 ## Поведение при ошибках
 
-- При `ECONNRESET` и `Client is closed` action пытается переподключиться и повторить загрузку файла.
+- При `ECONNRESET`, `EPIPE`, `Client is closed` и других сетевых ошибках action пытается переподключиться и повторить загрузку файла.
 - Если после всех попыток хотя бы один файл не загружен, step завершается с ошибкой (exit code `1`).
+
+### Self-signed сертификат (FTPS)
+
+Если FTPS-сервер использует self-signed сертификат, установите:
+
+```yaml
+secure: "true"
+secure_reject_unauthorized: "false"
+```
+
+Это отключает проверку доверия TLS-сертификата. Используйте только в доверенной сети/инфраструктуре.
 
 ## Параллельная загрузка
 

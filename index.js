@@ -9,6 +9,8 @@ async function main() {
     const localDir = process.env.INPUT_LOCAL_DIR || "./";
     const remoteDir = process.env.INPUT_REMOTE_DIR || "/";
     const secure = process.env.INPUT_SECURE === "true";
+    const secureRejectUnauthorizedInput = process.env.INPUT_SECURE_REJECT_UNAUTHORIZED || "true";
+    const secureRejectUnauthorized = secureRejectUnauthorizedInput === "true";
     const retryCount = Number.parseInt(process.env.INPUT_RETRY_COUNT || "3", 10);
     const retryDelayMs = Number.parseInt(process.env.INPUT_RETRY_DELAY_MS || "2000", 10);
     const parallelUploads = Number.parseInt(process.env.INPUT_PARALLEL_UPLOADS || "3", 10);
@@ -30,6 +32,11 @@ async function main() {
 
     if (!Number.isInteger(parallelUploads) || parallelUploads < 1 || parallelUploads > 3) {
         console.error("❌ INPUT_PARALLEL_UPLOADS должен быть целым числом от 1 до 3");
+        process.exit(1);
+    }
+
+    if (!["true", "false"].includes(secureRejectUnauthorizedInput)) {
+        console.error("❌ INPUT_SECURE_REJECT_UNAUTHORIZED должен быть true или false");
         process.exit(1);
     }
 
@@ -81,7 +88,13 @@ async function main() {
 
     /** @param {ftp.Client} client */
     async function connect(client) {
-        await client.access({ host, user, password: pass, secure });
+        await client.access({
+            host,
+            user,
+            password: pass,
+            secure,
+            secureOptions: secure ? { rejectUnauthorized: secureRejectUnauthorized } : undefined
+        });
         await client.ensureDir(remoteDir);
     }
 
@@ -217,6 +230,9 @@ async function main() {
 
         console.log("✅ Успешное подключение");
         console.log(`📂 Целевая директория на сервере: ${remoteDir}`);
+        if (secure) {
+            console.log(`🔐 Проверка TLS сертификата: ${secureRejectUnauthorized ? "включена" : "отключена"}`);
+        }
         console.log(`🚀 Параллельных загрузок: ${parallelUploads}`);
 
         /** @type {string[]} */
