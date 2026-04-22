@@ -1,5 +1,5 @@
 name: "fxpw FTP Deploy Action"
-description: "Загрузка файлов на FTP/SFTP с логированием каждого файла (basic-ftp v5.2+)"
+description: "Загрузка файлов на FTP/FTPS/SFTP с логированием каждого файла"
 author: 'Anton Koshel <fxpw@outlook.com>'
 
 runs:
@@ -11,6 +11,10 @@ branding:
   color: 'green'
 
 inputs:
+  connection_type:
+    description: "Тип соединения: ftp | ftps | sftp | ftps/ftp (автоопределение FTPS→FTP)"
+    required: false
+    default: "ftps/ftp"
   host:
     description: "FTP/SFTP хост"
     required: true
@@ -29,11 +33,11 @@ inputs:
     required: false
     default: "/"
   secure:
-    description: "FTPS (true/false)"
+    description: "FTPS (true/false), используется только для FTP/FTPS"
     required: false
     default: "false"
   secure_reject_unauthorized:
-    description: "Проверять TLS сертификат сервера (для self-signed установите false)"
+    description: "Проверять TLS сертификат сервера (для self-signed установите false), только для FTPS"
     required: false
     default: "true"
   retry_count:

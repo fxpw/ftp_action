@@ -1,8 +1,11 @@
 import ftp from "basic-ftp";
 import fs from "fs";
 import path from "path";
+import SftpClient from "ssh2-sftp-client";
 
 async function main() {
+    const connectionTypeInputRaw = (process.env.INPUT_CONNECTION_TYPE || "ftps/ftp").toLowerCase();
+    const connectionTypeInput = connectionTypeInputRaw === "ftp/ftps" ? "ftps/ftp" : connectionTypeInputRaw;
     const host = process.env.INPUT_HOST;
     const user = process.env.INPUT_USERNAME;
     const pass = process.env.INPUT_PASSWORD;
@@ -17,6 +20,11 @@ async function main() {
 
     if (!host || !user || !pass) {
         console.error("❌ INPUT_HOST, INPUT_USERNAME и INPUT_PASSWORD обязательны");
+        process.exit(1);
+    }
+
+    if (!["ftp", "ftps", "sftp", "ftps/ftp"].includes(connectionTypeInput)) {
+        console.error("❌ INPUT_CONNECTION_TYPE должен быть одним из: ftp, ftps, sftp, ftps/ftp");
         process.exit(1);
     }
 
@@ -43,6 +51,19 @@ async function main() {
     /** @param {number} ms */
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+    /** @typedef {"ftp" | "ftps" | "sftp"} ResolvedProtocol */
+
+    /**
+     * @typedef {{
+     *   kind: "ftp",
+     *   secureEnabled: boolean,
+     *   client: ftp.Client
+     * } | {
+     *   kind: "sftp",
+     *   client: SftpClient
+     * }} ConnectionClient
+     */
+
     /**
      * Сетевые обрывы (ECONNRESET, EPIPE и т.д.) оставляют клиент basic-ftp в несогласованном
      * состоянии — без переподключения повторная попытка почти всегда бесполезна.
@@ -68,7 +89,11 @@ async function main() {
                 msg.includes("ECONNRESET") ||
                 msg.includes("EPIPE") ||
                 msg.includes("ETIMEDOUT") ||
-                msg.includes("Client is closed")
+                msg.includes("Client is closed") ||
+                msg.includes("No response from server") ||
+                msg.includes("Not connected") ||
+                msg.includes("Connection lost") ||
+                msg.includes("Connection ended")
             ) {
                 return true;
             }
@@ -79,43 +104,104 @@ async function main() {
         return false;
     }
 
-    /** @returns {ftp.Client} */
-    function createClient() {
+    /**
+     * @param {boolean} secureEnabled
+     * @returns {ConnectionClient}
+     */
+    function createFtpClient(secureEnabled) {
         const client = new ftp.Client();
         client.ftp.verbose = false;
-        return client;
+        return {
+            kind: /** @type {"ftp"} */ ("ftp"),
+            secureEnabled,
+            client
+        };
     }
 
-    /** @param {ftp.Client} client */
-    async function connect(client) {
-        await client.access({
-            host,
-            user,
-            password: pass,
-            secure,
-            secureOptions: secure ? { rejectUnauthorized: secureRejectUnauthorized } : undefined
-        });
-        await client.ensureDir(remoteDir);
-    }
-
-    /** @param {ftp.Client} client */
-    async function reconnect(client) {
-        try {
-            client.close();
-        } catch {
-            // ignore close errors before reconnect
-        }
-        await connect(client);
+    /** @returns {ConnectionClient} */
+    function createSftpClient() {
+        return {
+            kind: /** @type {"sftp"} */ ("sftp"),
+            client: new SftpClient()
+        };
     }
 
     /**
-     * @param {ftp.Client} client
+     * @param {SftpClient} client
+     * @param {string} remotePath
+     */
+    async function ensureSftpDir(client, remotePath) {
+        const exists = await client.exists(remotePath);
+        if (!exists) {
+            await client.mkdir(remotePath, true);
+        }
+    }
+
+    /** @param {ConnectionClient} connection */
+    async function connect(connection) {
+        if (connection.kind === "ftp") {
+            await connection.client.access({
+                host,
+                user,
+                password: pass,
+                secure: connection.secureEnabled,
+                secureOptions: connection.secureEnabled
+                    ? { rejectUnauthorized: secureRejectUnauthorized }
+                    : undefined
+            });
+            await connection.client.ensureDir(remoteDir);
+            return;
+        }
+
+        await connection.client.connect({
+            host,
+            username: user,
+            password: pass
+        });
+        await ensureSftpDir(connection.client, remoteDir);
+    }
+
+    /** @param {ConnectionClient} connection */
+    async function closeClient(connection) {
+        try {
+            if (connection.kind === "ftp") {
+                connection.client.close();
+            } else {
+                await connection.client.end();
+            }
+        } catch {
+            // ignore close errors
+        }
+    }
+
+    /** @param {ConnectionClient} connection */
+    async function reconnect(connection) {
+        await closeClient(connection);
+        await connect(connection);
+    }
+
+    /**
+     * @param {ResolvedProtocol} resolvedProtocol
+     * @returns {ConnectionClient}
+     */
+    function createConnectionForProtocol(resolvedProtocol) {
+        if (resolvedProtocol === "sftp") {
+            return createSftpClient();
+        }
+        if (resolvedProtocol === "ftps") {
+            return createFtpClient(true);
+        }
+        return createFtpClient(false);
+    }
+
+    /**
+     * @param {ConnectionClient} connection
      * @param {string} localFile
      * @param {string} remoteFile
      * @param {number} workerId
      * @returns {Promise<boolean>}
      */
-    async function uploadWithRetry(client, localFile, remoteFile, workerId) {
+    async function uploadWithRetry(connection, localFile, remoteFile, workerId) {
         let lastError;
 
         for (let attempt = 0; attempt <= retryCount; attempt++) {
@@ -127,9 +213,19 @@ async function main() {
             }
 
             try {
-                await client.ensureDir(path.posix.dirname(remoteFile));
+                const remoteParent = path.posix.dirname(remoteFile);
+                if (connection.kind === "ftp") {
+                    await connection.client.ensureDir(remoteParent);
+                } else {
+                    await ensureSftpDir(connection.client, remoteParent);
+                }
+
                 console.log(`⬆️ [W${workerId}] Загружаем файл: ${localFile} → ${remoteFile}`);
-                await client.uploadFrom(localFile, remoteFile);
+                if (connection.kind === "ftp") {
+                    await connection.client.uploadFrom(localFile, remoteFile);
+                } else {
+                    await connection.client.fastPut(localFile, remoteFile);
+                }
                 console.log(`✅ [W${workerId}] Загружен: ${path.basename(localFile)}`);
                 return true;
             } catch (err) {
@@ -141,8 +237,8 @@ async function main() {
 
                 if (attempt < retryCount && shouldReconnect) {
                     try {
-                        console.log(`🔌 [W${workerId}] Восстанавливаем FTP соединение...`);
-                        await reconnect(client);
+                        console.log(`🔌 [W${workerId}] Восстанавливаем соединение...`);
+                        await reconnect(connection);
                         console.log(`✅ [W${workerId}] Соединение восстановлено`);
                     } catch (reconnectErr) {
                         const reconnectMessage =
@@ -221,17 +317,47 @@ async function main() {
         return files;
     }
 
-    console.log("🔹 Подключение к FTP серверу...");
+    /**
+     * @returns {Promise<ResolvedProtocol>}
+     */
+    async function resolveProtocol() {
+        if (connectionTypeInput === "ftp" || connectionTypeInput === "ftps" || connectionTypeInput === "sftp") {
+            return connectionTypeInput;
+        }
+
+        console.log("ℹ️ Режим ftps/ftp: сначала пробуем FTPS, при ошибке переключаемся на FTP");
+
+        const ftpsProbe = createConnectionForProtocol("ftps");
+        try {
+            await connect(ftpsProbe);
+            console.log("✅ FTPS доступен, используем FTPS");
+            return "ftps";
+        } catch (ftpsErr) {
+            const message = ftpsErr instanceof Error ? ftpsErr.message : String(ftpsErr);
+            console.log(`⚠️ FTPS недоступен: ${message}`);
+            console.log("↩️ Переключаемся на FTP");
+            return "ftp";
+        } finally {
+            await closeClient(ftpsProbe);
+        }
+    }
+
+    console.log("🔹 Подключение к серверу...");
 
     try {
-        const checkClient = createClient();
+        const resolvedProtocol = await resolveProtocol();
+        const checkClient = createConnectionForProtocol(resolvedProtocol);
         await connect(checkClient);
-        checkClient.close();
+        await closeClient(checkClient);
 
         console.log("✅ Успешное подключение");
+        console.log(`🔌 Протокол: ${resolvedProtocol.toUpperCase()}`);
         console.log(`📂 Целевая директория на сервере: ${remoteDir}`);
-        if (secure) {
+        if (resolvedProtocol === "ftps") {
             console.log(`🔐 Проверка TLS сертификата: ${secureRejectUnauthorized ? "включена" : "отключена"}`);
+        }
+        if (resolvedProtocol !== "ftps" && secure) {
+            console.log("ℹ️ INPUT_SECURE игнорируется, так как выбран connection_type");
         }
         console.log(`🚀 Параллельных загрузок: ${parallelUploads}`);
 
@@ -271,7 +397,7 @@ async function main() {
 
         /** @param {number} workerId */
         async function worker(workerId) {
-            const workerClient = createClient();
+            const workerClient = createConnectionForProtocol(resolvedProtocol);
             await connect(workerClient);
 
             try {
@@ -283,7 +409,12 @@ async function main() {
                         continue;
                     }
 
-                    const uploaded = await uploadWithRetry(workerClient, file.local, file.remote, workerId);
+                    const uploaded = await uploadWithRetry(
+                        workerClient,
+                        file.local,
+                        file.remote,
+                        workerId
+                    );
                     if (uploaded) {
                         uploadedCount += 1;
                         uploadedBytes += file.size;
@@ -293,7 +424,7 @@ async function main() {
                     logProgress();
                 }
             } finally {
-                workerClient.close();
+                await closeClient(workerClient);
             }
         }
 
@@ -318,10 +449,10 @@ async function main() {
             console.log(`🎉 Все файлы обработаны! Загружено: ${uploadedCount}`);
         }
     } catch (err) {
-        console.error("❌ Ошибка подключения к FTP:", err);
+        console.error("❌ Ошибка подключения:", err);
         process.exit(1);
     } finally {
-        console.log("🔹 Отключение от FTP сервера");
+        console.log("🔹 Отключение от сервера");
     }
 }
 

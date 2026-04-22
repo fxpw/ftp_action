@@ -2,19 +2,20 @@
 
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-FTP%20Deploy%20Action-blue?logo=github)](https://github.com/marketplace/actions/ftp-deploy-action)
 
-GitHub Action для загрузки файлов на FTP/SFTP с логированием каждого файла (basic-ftp v5.2+).
+GitHub Action для загрузки файлов на FTP/FTPS/SFTP с логированием каждого файла.
 
 ## Входные параметры
 
 | Параметр | Описание | Обязательный | По умолчанию |
 |----------|----------|:---:|:---:|
+| `connection_type` | Тип соединения: `ftp` \| `ftps` \| `sftp` \| `ftps/ftp` (авторежим FTPS→FTP) | ❌ | `ftps/ftp` |
 | `host` | FTP/SFTP хост | ✅ | — |
 | `username` | FTP пользователь | ✅ | — |
 | `password` | FTP пароль | ✅ | — |
 | `local_dir` | Локальная папка для загрузки | ✅ | `./` |
 | `remote_dir` | Директория на сервере | ❌ | `/` |
-| `secure` | Использовать FTPS | ❌ | `false` |
-| `secure_reject_unauthorized` | Проверять TLS сертификат FTPS-сервера | ❌ | `true` |
+| `secure` | Использовать FTPS (актуально только для FTP/FTPS) | ❌ | `false` |
+| `secure_reject_unauthorized` | Проверять TLS сертификат FTPS-сервера (только FTPS) | ❌ | `true` |
 | `retry_count` | Количество повторных попыток при сетевой ошибке | ❌ | `3` |
 | `retry_delay_ms` | Пауза между попытками (мс) | ❌ | `2000` |
 | `parallel_uploads` | Количество параллельных загрузок | ❌ | `3` |
@@ -28,6 +29,7 @@ steps:
   - name: FTP Upload
     uses: fxpw/ftp_action@v1.0.0
     with:
+      connection_type: "ftps/ftp"
       host: ${{ secrets.FTP_HOST }}
       username: ${{ secrets.FTP_USER }}
       password: ${{ secrets.FTP_PASS }}
@@ -39,6 +41,12 @@ steps:
       retry_delay_ms: "2000"
       parallel_uploads: "3"
 ```
+
+## Режимы подключения
+
+- `ftps/ftp` (по умолчанию): action сначала пытается подключиться по FTPS, при ошибке автоматически переключается на FTP.
+- `sftp`: action использует только SFTP (SSH). Автопереключения на FTP/FTPS нет.
+- `ftp` и `ftps`: жесткая фиксация протокола без fallback.
 
 ## Поведение при ошибках
 
